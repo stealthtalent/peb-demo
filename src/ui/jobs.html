@@ -1,0 +1,18 @@
+{{define "jobs"}}
+<div class="card">
+  <h2>Jobs</h2>
+  <form hx-post="/api/jobs" hx-swap="afterbegin" hx-target="#jobs-list" hx-on::afterRequest="this.reset()" class="form-inline">
+    <input type="text" name="title" placeholder="Job title" required />
+    <button type="submit" class="btn btn-primary">Add Job</button>
+  </form>
+  <ul id="jobs-list" class="list">
+    {{range .}}
+    <li class="list-item">
+      <span class="id">{{.ID}}</span>
+      <span class="title">{{.Title}}</span>
+      <span class="created">{{formatTime .CreatedAt}}</span>
+    </li>
+    {{end}}
+  </ul>
+</div>
+{{end}}

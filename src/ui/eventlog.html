@@ -1,0 +1,22 @@
+{{define "eventlog"}}
+<div class="card">
+  <h2>Event Log</h2>
+  <ul id="eventlog-list" class="list event-log">
+    {{range .}}
+    <li class="list-item event-item">
+      <span class="timestamp">{{formatTime .Timestamp}}</span>
+      <span class="type">{{.Type}}</span>
+      <span class="id">{{.ID}}</span>
+      <pre class="payload">{{.Payload}}</pre>
+    </li>
+    {{end}}
+  </ul>
+</div>
+
+<script>
+// HTMX-driven live refresh of the event log every 2 seconds.
+setInterval(function() {
+  htmx.ajax('GET', '/api/eventlog', {target: '#eventlog-list', swap: 'innerHTML'});
+}, 2000);
+</script>
+{{end}}

@@ -1,0 +1,35 @@
+{{define "tabs"}}
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="tab-content" onclick="showTab('jobs')">Jobs</button>
+  <button class="tab-btn" onclick="showTab('candidates')">Candidates</button>
+  <button class="tab-btn" onclick="showTab('eventlog')">Event Log</button>
+</nav>
+
+<script>
+function showTab(tabName) {
+  // Hide all card sections
+  document.querySelectorAll('#tab-content > .card').forEach(function(card) {
+    card.style.display = 'none';
+  });
+  // Show the requested one — each card has an id we can reveal
+  var target = document.getElementById(tabName + '-card');
+  if (target) target.style.display = 'block';
+  // Update active state
+  document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.classList.remove('active');
+  });
+  event.target.classList.add('active');
+}
+// Show jobs tab on load
+window.addEventListener('DOMContentLoaded', function() {
+  showTab('jobs');
+});
+</script>
+
+<style>
+  .tabs { display: flex; gap: .25rem; margin-bottom: 0; border-bottom: 1px solid #ddd; }
+  .tab-btn { padding: .5rem 1.25rem; border: 1px solid #ddd; border-bottom: none; background: #f8f8f8; cursor: pointer; font-size: .9em; }
+  .tab-btn.active { background: #fff; border-bottom-color: #fff; font-weight: 600; }
+  .tab-btn:hover { background: #e8e8e8; }
+</style>
+{{end}}

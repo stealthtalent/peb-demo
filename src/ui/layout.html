@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>peb-demo — HTMX Web UI</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 2rem; background: #f5f5f5; }
+    .card { background: #fff; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1.5rem; }
+    h1 { color: #333; }
+    h2 { color: #555; border-bottom: 1px solid #eee; padding-bottom: .5rem; }
+    .form-inline { display: flex; gap: .5rem; margin-bottom: 1rem; }
+    .form-inline input { padding: .4rem .75rem; border: 1px solid #ddd; border-radius: 4px; flex: 1; }
+    .btn { padding: .4rem 1rem; border: none; border-radius: 4px; cursor: pointer; }
+    .btn-primary { background: #007bff; color: #fff; }
+    .btn-primary:hover { background: #0056b3; }
+    .list { list-style: none; padding: 0; margin: 0; }
+    .list-item { display: flex; gap: 1rem; padding: .5rem .75rem; border-bottom: 1px solid #eee; align-items: center; }
+    .list-item .id { font-family: monospace; font-size: .85em; color: #888; }
+    .list-item .title, .list-item .name { font-weight: 600; }
+    .list-item .email { color: #666; }
+    .list-item .created, .list-item .timestamp { font-size: .85em; color: #888; font-family: monospace; }
+    .list-item .type { font-size: .85em; color: #007bff; font-family: monospace; text-transform: uppercase; }
+    .payload { font-family: monospace; font-size: .8em; color: #888; }
+    .event-log .event-item { flex-direction: column; align-items: flex-start; gap: .25rem; }
+    .event-log .event-item .payload { white-space: pre-wrap; word-break: break-all; }
+    .tabs { display: flex; gap: .25rem; margin-bottom: 0; border-bottom: 1px solid #ddd; }
+    .tab-btn { padding: .5rem 1.25rem; border: 1px solid #ddd; border-bottom: none; background: #f8f8f8; cursor: pointer; font-size: .9em; }
+    .tab-btn.active { background: #fff; border-bottom-color: #fff; font-weight: 600; }
+    .tab-btn:hover { background: #e8e8e8; }
+  </style>
+</head>
+<body>
+  <h1>peb-demo</h1>
+  <nav class="tabs">
+    <button class="tab-btn active" onclick="showTab('jobs-card')">Jobs</button>
+    <button class="tab-btn" onclick="showTab('candidates-card')">Candidates</button>
+    <button class="tab-btn" onclick="showTab('eventlog-card')">Event Log</button>
+  </nav>
+  <div id="tab-content">
+    <div id="jobs-card" class="card">{{template "jobs" .Jobs}}</div>
+    <div id="candidates-card" class="card" style="display:none">{{template "candidates" .Candidates}}</div>
+    <div id="eventlog-card" class="card" style="display:none">{{template "eventlog" .Events}}</div>
+  </div>
+  <script>
+    function showTab(cardId) {
+      document.querySelectorAll('#tab-content > .card').forEach(function(card) {
+        card.style.display = 'none';
+      });
+      document.getElementById(cardId).style.display = 'block';
+      document.querySelectorAll('.tab-btn').forEach(function(btn) {
+        btn.classList.remove('active');
+      });
+      event.target.classList.add('active');
+    }
+  </script>
+</body>
+</html>

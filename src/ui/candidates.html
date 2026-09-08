@@ -1,0 +1,20 @@
+{{define "candidates"}}
+<div class="card">
+  <h2>Candidates</h2>
+  <form hx-post="/api/candidates" hx-swap="afterbegin" hx-target="#candidates-list" hx-on::afterRequest="this.reset()" class="form-inline">
+    <input type="text" name="name" placeholder="Full name" required />
+    <input type="email" name="email" placeholder="Email address" required />
+    <button type="submit" class="btn btn-primary">Add Candidate</button>
+  </form>
+  <ul id="candidates-list" class="list">
+    {{range .}}
+    <li class="list-item">
+      <span class="id">{{.ID}}</span>
+      <span class="name">{{.Name}}</span>
+      <span class="email">{{.Email}}</span>
+      <span class="created">{{formatTime .CreatedAt}}</span>
+    </li>
+    {{end}}
+  </ul>
+</div>
+{{end}}

@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
+	"embed"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -41,10 +42,9 @@ type pageData struct {
 
 // eventLogEntry is the template-friendly view of an eventlog.Entry.
 type eventLogEntry struct {
-	ID        string
-	Type      string
-	Payload   string
-	Timestamp time.Time
+	ID      string
+	Type    string
+	Payload string
 }
 
 func eventLogEntryFrom(e eventlog.Entry) eventLogEntry {
@@ -58,15 +58,13 @@ func eventLogEntryFrom(e eventlog.Entry) eventLogEntry {
 		}
 	}
 	return eventLogEntry{
-		ID:        e.ID,
-		Type:      e.Type,
-		Payload:   payload,
-		Timestamp: e.Timestamp,
+		ID:      e.ID,
+		Type:    e.Type,
+		Payload: payload,
 	}
 }
 
-// rowTemplates holds templates for individual job/candidate rows used in
-// HTMX prepend swaps after create.
+// rowTemplates for HTMX prepend swaps after create.
 var rowTemplates = template.Must(template.New("").
 	Funcs(template.FuncMap{
 		"formatTime": func(t time.Time) string {
@@ -91,6 +89,10 @@ var rowTemplates = template.Must(template.New("").
 </li>
 {{end}}
 `))
+
+// webuiNotifyChannel is the pg_notify channel that pg_eventserv listens on to
+// push events to WebSocket clients in the browser.
+const webuiNotifyChannel = "webui_events"
 
 // App holds all the server's shared dependencies.
 type App struct {
@@ -121,7 +123,7 @@ func NewApp(ctx context.Context, dsn string) (*App, error) {
 		eventLog: elog,
 	}
 
-	// Start the dispatcher: outbox → group queue.
+	// Start the dispatcher: outbox -> group queue.
 	go func() {
 		if err := bus.RunDispatcher(context.Background(), eventbus.DispatcherOptions{
 			Group: "demo-group",
@@ -130,7 +132,9 @@ func NewApp(ctx context.Context, dsn string) (*App, error) {
 		}
 	}()
 
-	// Start the consumer group: group queue → handler (append to event log).
+	// Start the consumer group: group queue -> handler.
+	// The handler appends to the in-memory event log AND fires pg_notify on
+	// the webui channel so pg_eventserv can push to WebSocket clients.
 	go func() {
 		if err := bus.RunGroup(context.Background(), eventbus.GroupOptions{
 			Group: "demo-group",
@@ -139,14 +143,37 @@ func NewApp(ctx context.Context, dsn string) (*App, error) {
 			if len(e.Payload) > 0 {
 				if err := json.Unmarshal(e.Payload, &payload); err != nil {
 					log.Printf("[handler] unmarshal payload for %s: %v", e.ID, err)
-					return nil
+					payload = nil
 				}
 			}
-			app.eventLog.Append(eventlog.Entry{
+
+			// Append to the in-memory log (for initial page load / REST API).
+			now := time.Now()
+			entry := eventlog.Entry{
 				ID:      e.ID,
 				Type:    e.Type,
 				Payload: payload,
+			}
+			app.eventLog.Append(entry)
+
+			// Fire pg_notify on the webui channel with the full event JSON so
+			// pg_eventserv can push it to WebSocket clients.
+			wsPayload, _ := json.Marshal(struct {
+				Type    string         `json:"type"`
+				ID      string         `json:"id"`
+				Payload map[string]any `json:"payload"`
+				Time    string         `json:"time"`
+			}{
+				Type:    e.Type,
+				ID:      e.ID,
+				Payload: payload,
+				Time:    now.Format("2006-01-02 15:04:05"),
 			})
+			if _, err := tx.Exec(ctx,
+				`SELECT pg_notify($1, $2)`, webuiNotifyChannel, string(wsPayload)); err != nil {
+				log.Printf("[handler] pg_notify webui: %v", err)
+			}
+
 			return nil
 		}); err != nil {
 			log.Printf("[group worker] exited: %v", err)
@@ -161,9 +188,8 @@ func (a *App) Close() {
 	a.pool.Close()
 }
 
-// ─── HTML page handler ────────────────────────────────────────────────
+// --- HTML page handler ---
 
-// handleRoot renders the full page with jobs, candidates, and event log.
 func (a *App) handleRoot(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -182,6 +208,7 @@ func (a *App) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build event log entries for initial page load
 	entries := a.eventLog.All()
 	events := make([]eventLogEntry, len(entries))
 	for i, e := range entries {
@@ -189,18 +216,18 @@ func (a *App) handleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, "src/ui/layout.html", pageData{
+	if err := tmpl.ExecuteTemplate(w, "layout.html", pageData{
 		Jobs:       jobs,
 		Candidates: cands,
 		Events:     events,
 	}); err != nil {
 		log.Printf("[handler] template error: %v", err)
+		http.Error(w, "template error: "+err.Error(), http.StatusInternalServerError)
 	}
 }
 
-// ─── HTMX fragment handlers ────────────────────────────────────────────
+// --- HTMX fragment handlers (for list updates after create) ---
 
-// handleJobsFragment returns just the jobs list content (for HTMX swaps).
 func (a *App) handleJobsFragment(w http.ResponseWriter, r *http.Request) {
 	jobs, err := a.jobRepos.List(r.Context())
 	if err != nil {
@@ -213,7 +240,6 @@ func (a *App) handleJobsFragment(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleCandidatesFragment returns just the candidates list content.
 func (a *App) handleCandidatesFragment(w http.ResponseWriter, r *http.Request) {
 	cands, err := a.candRepos.List(r.Context())
 	if err != nil {
@@ -226,25 +252,8 @@ func (a *App) handleCandidatesFragment(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleEventlogFragment is the HTMX endpoint for the live event log.
-// It returns just the event log list items, refreshed every 2 seconds by
-// the client-side setInterval in eventlog.html.
-func (a *App) handleEventlogFragment(w http.ResponseWriter, r *http.Request) {
-	entries := a.eventLog.All()
-	events := make([]eventLogEntry, len(entries))
-	for i, e := range entries {
-		events[i] = eventLogEntryFrom(e)
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, "eventlog", events); err != nil {
-		log.Printf("[handler] template error: %v", err)
-	}
-}
+// --- Create handlers ---
 
-// ─── Create handlers (HTMX target responses) ──────────────────────────
-
-// handleCreateJob creates a job (publishing an event in the same tx),
-// then returns the new job row HTML for HTMX to prepend.
 func (a *App) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -268,8 +277,6 @@ func (a *App) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleCreateCandidate creates a candidate (publishing an event in the same tx),
-// then returns the new candidate row HTML for HTMX to prepend.
 func (a *App) handleCreateCandidate(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -298,32 +305,55 @@ func (a *App) handleCreateCandidate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ─── Routes ───────────────────────────────────────────────────────────
+// --- Event log API handler ---
+
+func (a *App) handleEventLog(w http.ResponseWriter, r *http.Request) {
+	entries := a.eventLog.All()
+	out := make([]map[string]any, len(entries))
+	for i, e := range entries {
+		out[i] = map[string]any{
+			"id":      e.ID,
+			"type":    e.Type,
+			"payload": e.Payload,
+			"time":    e.Timestamp.Format("2006-01-02 15:04:05"),
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// --- Routes ---
 
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.HandlerFunc(a.handleRoot))
 
-	// HTMX fragment endpoints
+	// HTMX fragment endpoints for list updates
 	mux.Handle("/jobs", http.HandlerFunc(a.handleJobsFragment))
 	mux.Handle("/candidates", http.HandlerFunc(a.handleCandidatesFragment))
-	mux.Handle("/api/eventlog", http.HandlerFunc(a.handleEventlogFragment))
 
 	// Create endpoints (POST only)
 	mux.Handle("/api/jobs", http.HandlerFunc(a.handleCreateJob))
 	mux.Handle("/api/candidates", http.HandlerFunc(a.handleCreateCandidate))
 
+	// Event log API (for initial load or polling fallback)
+	mux.Handle("/api/eventlog", http.HandlerFunc(a.handleEventLog))
+
 	return mux
 }
 
-// ─── main ─────────────────────────────────────────────────────────────
+// --- main ---
 
 func main() {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		// Default matches the docker-compose Postgres on port 8432.
-		dsn = "postgres://test:peb_demo@localhost:8432/peb_demo?sslmode=disable"
-		// TODO: set DATABASE_URL env var with real credentials in production
+		dbUser := getenv("DB_USER", "test")
+		dbPass := getenv("DB_PASSWORD", "")
+		if dbPass == "" {
+			log.Fatal("DATABASE_URL or DB_PASSWORD environment variable is required")
+		}
+		dsn = fmt.Sprintf("postgres://%s:%s@127.0.0.1:8432/peb_demo?sslmode=disable",
+			url.QueryEscape(dbUser), url.QueryEscape(dbPass))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
@@ -335,10 +365,7 @@ func main() {
 	}
 	defer app.Close()
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8666"
-	}
+	port := getenv("PORT", "8666")
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -346,6 +373,7 @@ func main() {
 	}
 
 	log.Printf("peb-demo server starting on http://localhost:%s", port)
+	log.Printf("WebSocket events via pg_eventserv on ws://localhost:7700/listen/%s", webuiNotifyChannel)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server: %v", err)
@@ -356,4 +384,11 @@ func main() {
 	log.Println("shutting down...")
 	_ = srv.Shutdown(context.Background())
 	log.Println("done")
+}
+
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

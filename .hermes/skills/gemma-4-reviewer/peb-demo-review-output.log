@@ -1,0 +1,123 @@
+### **Code Review Report: peb-demo**
+
+**Summary:** The architecture shows a pattern for event sourcing/outboxing, whic
+h is generally sound but introduces significant complexity points regarding tran
+sactional boundaries and concurrency management that require immediate attention
+. Several areas risk race conditions or data inconsistency under load.
+
+---
+
+### 🐞 Identified Bugs & Issues (Severity: Critical $\rightarrow$ Low)
+
+**Critical Severity Bugs (Must Fix):**
+*   **`src/middleware/event_firing.go`**: The `CreateWithEvents` function implie
+s a single database transaction (`begins tx... commit`). If the publishing of an
+ event to the `bus` fails *after* the initial job insertion but *before* the com
+mit, the entire unit of work will fail due to standard SQL transaction rules (ro
+llback), which is correct. However, if the bus/event publishing mechanism itself
+ relies on external calls or non-transactional writes, that failure path must be
+ explicitly handled *within* the scope of the transaction logic to guarantee ato
+micity relative to the DB write. A transactional boundary around **all** steps (
+DB save + Event Publish) is critical and appears fragile.
+*   **`src/eventlog/log.go`**: The `Append(e Entry)` method uses `sync.Mutex` (`
+Log struct: mu sync.Mutex`). However, if this structure is embedded or shared ac
+ross multiple concurrent handlers/goroutines without the calling code acquiring
+a lock *before* calling `Append`, a race condition exists on the internal slice
+modification. **The API needs to expose a function that handles locking internal
+ly (e.g., `log.Append(Entry)`)**, rather than exposing mutable internals guarded
+ only by a mutex reference.
+
+**High Severity Issues (Requires Re-architecture/Refactoring):**
+*   **`src/middleware/event_firing.go`**: The middleware logic mixes business ac
+tion (`INSERT INTO jobs`) with side effects (event publishing). This violates cl
+ean separation of concerns. A dedicated "Event Publisher" service, triggered *af
+ter* a successful repository save (or better, within an outbox pattern executed
+by the DB transaction hook), would improve resilience and testability.
+*   **`src/middleware/event_firing.go`**: The reliance on `events.TypeJobCreated
+ = job.created` implies that string constants are used for event types. These sh
+ould be strongly typed enums defined in a shared package, not derived from model
+ struct fields or hardcoded strings, to prevent silent mismatches during refacto
+ring.
+*   **`src/eventlog/log.go`**: `All()` returns a snapshot copy, which is good pr
+actice for preventing external mutation. However, if the number of entries grows
+ very large (e.g., $>10k$), returning the entire slice copy will cause excessive
+ memory allocation and latency spikes. Consider implementing pagination or strea
+m access for reads on high-volume logs.
+
+---
+
+### ✅ Checklist Compliance Review
+
+**1. Transactional Integrity:**
+*   **Finding:** The intent in `event_firing.go` is correct (using a transaction
+).
+*   **Improvement:** Must confirm that the event publishing mechanism *itself* i
+s either transactional or uses an outbox pattern where the failure to publish re
+sults in a guaranteed retry/dead-letter queue, rather than just failing the requ
+est handler.
+
+**2. Concurrency Safety:**
+*   **Finding:** Direct race condition potential in `eventlog.go`'s `Append` met
+hod if not guarded by external locks.
+*   **Improvement:** Encapsulate locking within methods that mutate state (`sync
+.Mutex` usage must be internalized to the structure methods).
+
+**3. Error Handling:**
+*   **Finding:** Not explicitly visible, but inferred from transaction setup.
+*   **Recommendation:** All DB calls (especially those involving transactions) *
+must* check for `pgxpool.TxError` or connection errors and translate them into a
+pplication-specific domain errors, not just letting the underlying driver panic
+or return opaque errors up to the HTTP handler layer.
+
+**4. HTTP Handlers:**
+*   **Finding:** The handlers are described as serving HTMX fragments/full pages
+ (`server.go`).
+*   **Recommendation:** Since these are state-changing POST routes, they must va
+lidate all incoming data structures (Job/Candidate) against a formal request bod
+y schema *before* invoking business logic to prevent injection or null pointer i
+ssues.
+
+**5. Template Safety:**
+*   **Finding:** Uses `embed.FS` and `html/template`.
+*   **Status:** Assumed safe, provided that no user-supplied input is passed int
+o template data structures without first being escaped by the templating engine.
+ This is a standard Go pitfall to verify during implementation.
+
+**6. Resource Management:**
+*   **Finding:** Database connections (`pgxpool.Pool`) are used.
+*   **Recommendation:** Ensure that database/connection pool initialization uses
+ `defer dbpool.Close()` in the main server startup routine (`server.go`). For HT
+TP handlers, connection handling is typically managed by the framework middlewar
+e (e.g., context passing a request-scoped transaction), which seems to be correc
+tly assumed here but warrants confirmation.
+
+**7. Security:**
+*   **Finding:** None explicitly visible concerning sanitization or input valida
+tion beyond what's implied in handlers.
+*   **Critical Vulnerability Gap:** **Missing Input Validation.** All API endpoi
+nts (`POST /api/jobs`, `POST /api/candidates`) must implement strict server-side
+ validation (e.g., max length checks, character set restrictions) on all incomin
+g strings *before* they touch the database or event bus logic. This prevents XSS
+ payloads from being stored if later rendered unsafely, and prevents data trunca
+tion errors.
+
+**8. Code Style:**
+*   **General:** The separation into middleware, models, and handlers is good.
+*   **Minor Point:** Naming consistency between `job.created` (in event types) a
+nd the `Job` struct field (`CreatedAt time.Time`) should be harmonized or abstra
+cted away from raw usage strings.
+
+---
+
+### 🛠️ Actionable Plan for Next Steps
+
+1.  Implement internal locking guards in `src/eventlog/log.go`.
+2.  Refactor `src/middleware/event_firing.go` to strictly separate the DB write
+transaction from the external event publishing logic, possibly adopting an expli
+cit Outbox table pattern managed by a dedicated goroutine or hook.
+3.  Add mandatory request body validation layer to all POST handlers described i
+n `server.go`.
+
+peb-demo on  main via 🐹 v1.26.1 on ☁️  sts-dev-admin (us-east-1) on ☁️  daniel
+honig@loomstate.org took 24s
+❯

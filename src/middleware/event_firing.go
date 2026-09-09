@@ -76,7 +76,7 @@ func (r *JobRepos) CreateWithEvents(ctx context.Context, title string) (models.J
 	if _, err := r.bus.Publish(ctx, tx, eventbus.PublishParams{
 		Type:        events.TypeJobCreated,
 		OrderingKey: j.ID,
-		Payload:     payload,
+		Payload:     json.RawMessage(payload),
 	}); err != nil {
 		return models.Job{}, fmt.Errorf("publish job.created: %w", err)
 	}
@@ -167,7 +167,7 @@ func (r *CandidateRepos) CreateWithEvents(ctx context.Context, name, email strin
 	if _, err := r.bus.Publish(ctx, tx, eventbus.PublishParams{
 		Type:        events.TypeCandidateCreated,
 		OrderingKey: c.ID,
-		Payload:     payload,
+		Payload:     json.RawMessage(payload),
 	}); err != nil {
 		return models.Candidate{}, fmt.Errorf("publish candidate.created: %w", err)
 	}

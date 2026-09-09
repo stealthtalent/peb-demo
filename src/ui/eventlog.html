@@ -17,11 +17,11 @@
       </tr>
       <tr>
         <td style="padding:2px 8px;color:#666;">  └ JobWorker</td>
-        <td style="padding:2px 8px;font-family:monospace;color:#0a0;">2 <span class="activity" id="job-activity" style="color:#28a745;">● active</span></td>
+        <td style="padding:2px 8px;font-family:monospace;color:#0a0;">2 <span class="activity" id="job-activity" style="color:#28a745;">● active</span> <span id="job-counter" style="font-size:0.7em;background:#0a0;color:#fff;border-radius:10px;padding:1px 6px;">0</span></td>
       </tr>
       <tr>
         <td style="padding:2px 8px;color:#666;">  └ CandidateWorker</td>
-        <td style="padding:2px 8px;font-family:monospace;color:#0a0;">2 <span class="activity" id="cand-activity" style="color:#28a745;">● active</span></td>
+        <td style="padding:2px 8px;font-family:monospace;color:#0a0;">2 <span class="activity" id="cand-activity" style="color:#28a745;">● active</span> <span id="cand-counter" style="font-size:0.7em;background:#0a58a0;color:#fff;border-radius:10px;padding:1px 6px;">0</span></td>
       </tr>
       <tr></tr>
       <tr>
@@ -37,6 +37,15 @@
         <td style="padding:2px 8px;font-family:monospace;" id="stat-processed">0</td>
       </tr>
     </table>
+  </div>
+
+  <div class="activity-feed-container" style="margin-bottom:1rem;">
+    <div style="font-size:0.8em;color:#888;font-weight:600;margin-bottom:0.5rem;">
+      Worker Activity <span id="activity-status" style="font-size:0.8em;color:#007bff;">(live)</span>
+    </div>
+    <div id="activity-feed" class="activity-feed" style="max-height:200px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:6px;">
+      <div style="padding:0.5rem 0.75rem;font-size:0.8em;color:#aaa;text-align:center;">Waiting for activity...</div>
+    </div>
   </div>
 
   <ul id="eventlog-list" class="list event-log">
@@ -71,23 +80,61 @@
     }
   }
 
+  function addToActivityFeed(worker, type, eventId, time) {
+    var feed = document.getElementById('activity-feed');
+    var placeholder = feed.querySelector('div[style*="text-align:center"]');
+    if (placeholder) feed.innerHTML = '';
+
+    var entry = document.createElement('div');
+    entry.className = 'activity-entry';
+    entry.style.padding = '0.4rem 0.75rem';
+    entry.style.borderBottom = '1px solid #f0f0f0';
+    entry.style.display = 'flex';
+    entry.style.justContent = 'space-between';
+    entry.style.fontSize = '0.85em';
+
+    var color = worker === 'JobWorker' ? '#0a0' : worker === 'CandidateWorker' ? '#0a58a0' : '#666';
+
+    entry.innerHTML = '<span style="font-family:monospace;color:' + color + ';">' + worker +
+      '</span><span style="color:#888;font-family:monospace;font-size:0.8em;">' + time +
+      '</span><span style="color:#666;font-size:0.75em;">' + type +
+      ' <span style="color:#999;">' + eventId.substring(0, 8) + '...</span></span>' +
+      '<span class="status" style="color:#28a745;font-size:0.8em;">processing</span>';
+
+    feed.prepend(entry);
+
+    setTimeout(function() {
+      var statusEl = entry.querySelector('.status');
+      if (statusEl) {
+        statusEl.style.color = '#6c757d';
+        statusEl.textContent = 'done';
+      }
+    }, 1500);
+  }
+
   function markActivity(workerType) {
     lastActivity = Date.now();
     var idMap = {
-      'JobWorker': 'job-activity',
-      'CandidateWorker': 'cand-activity'
+      'JobWorker': { activity: 'job-activity', counter: 'job-counter' },
+      'CandidateWorker': { activity: 'cand-activity', counter: 'cand-counter' }
     };
-    var id = idMap[workerType] || 'active-indicator';
-    var el = document.getElementById(id);
-    if (el) {
-      el.style.color = '#0a0';
-      el.textContent = '● processing';
-      setTimeout(function() {
-        if (el) {
-          el.style.color = '#28a745';
-          el.textContent = '● active';
-        }
-      }, 1500);
+    var ids = idMap[workerType];
+    if (ids) {
+      var el = document.getElementById(ids.activity);
+      if (el) {
+        el.style.color = '#0a0';
+        el.textContent = '● processing';
+        setTimeout(function() {
+          if (el) {
+            el.style.color = '#28a745';
+            el.textContent = '● active';
+          }
+        }, 1500);
+      }
+      var counter = document.getElementById(ids.counter);
+      if (counter) {
+        counter.textContent = parseInt(counter.textContent || '0') + 1;
+      }
     }
     updateActivityIndicator();
   }
@@ -105,7 +152,8 @@
       try { data = JSON.parse(event.data); } catch(e) { return; }
 
       var worker = data.worker || 'Unknown';
-      markActivity(worker.toLowerCase());
+      markActivity(worker);
+      addToActivityFeed(worker, data.type, data.id, data.time || '');
 
       var li = document.createElement('li');
       li.className = 'list-item event-item';

@@ -17,21 +17,45 @@
 
 <script>
 (function() {
-  var ws = new WebSocket('ws://' + window.location.hostname + ':7700/listen/webui_events');
-  ws.onopen = function() { console.log('WebSocket connected to pg_eventserv'); };
-  ws.onmessage = function(event) {
-    var data = JSON.parse(event.data);
-    var list = document.getElementById('eventlog-list');
-    var li = document.createElement('li');
-    li.className = 'list-item event-item';
-    li.innerHTML = '<span class="timestamp">' + (data.time || '') + '</span>' +
-                   '<span class="type">' + data.type + '</span>' +
-                   '<span class="id">' + data.id + '</span>' +
-                   '<pre class="payload">' + (data.payload ? JSON.stringify(data.payload, null, 2) : '') + '</pre>';
-    list.prepend(li);
-  };
-  ws.onclose = function() { console.log('WebSocket disconnected'); };
-  ws.onerror = function(err) { console.log('WebSocket error:', err); };
+  var list = document.getElementById('eventlog-list');
+  var reconnectAttempts = 0;
+  var maxReconnectAttempts = 30;
+
+  function connect() {
+    var ws = new WebSocket('ws://' + window.location.hostname + ':7700/listen/webui_events');
+
+    ws.onopen = function() {
+      console.log('pg_eventserv WebSocket connected');
+      reconnectAttempts = 0;
+    };
+
+    ws.onmessage = function(event) {
+      var data;
+      try { data = JSON.parse(event.data); } catch(e) { return; }
+
+      var li = document.createElement('li');
+      li.className = 'list-item event-item';
+      li.innerHTML = '<span class="timestamp">' + (data.time || '') + '</span>' +
+                     '<span class="type">' + data.type + '</span>' +
+                     '<span class="id">' + data.id + '</span>' +
+                     '<pre class="payload">' + (data.payload ? JSON.stringify(data.payload, null, 2) : '') + '</pre>';
+      list.prepend(li);
+    };
+
+    ws.onclose = function() {
+      console.log('pg_eventserv WebSocket disconnected');
+      reconnectAttempts++;
+      if (reconnectAttempts <= maxReconnectAttempts) {
+        setTimeout(connect, Math.min(1000 * reconnectAttempts, 10000));
+      }
+    };
+
+    ws.onerror = function(err) {
+      console.log('WebSocket error:', err);
+    };
+  }
+
+  connect();
 })();
 </script>
 {{end}}

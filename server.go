@@ -137,7 +137,8 @@ func NewApp(ctx context.Context, dsn string) (*App, error) {
 	// the webui channel so pg_eventserv can push to WebSocket clients.
 	go func() {
 		if err := bus.RunGroup(context.Background(), eventbus.GroupOptions{
-			Group: "demo-group",
+			Group:   "demo-group",
+			Workers: 4,
 		}, func(ctx context.Context, tx pgx.Tx, e eventbus.Event) error {
 			var payload map[string]any
 			if len(e.Payload) > 0 {

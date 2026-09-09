@@ -6,7 +6,10 @@
   </p>
 
   <div class="worker-stats" style="margin-bottom:1rem;padding:0.75rem;background:#f8f8f8;border-radius:6px;border:1px solid #e0e0e0;">
-    <div style="font-size:0.8em;color:#888;font-weight:600;margin-bottom:0.5rem;">Worker Pool Status</div>
+    <div style="font-size:0.8em;color:#888;font-weight:600;margin-bottom:0.5rem;">
+      Worker Pool Status 
+      <span id="active-indicator" style="color:#28a745;font-size:0.75em;vertical-align:middle;">●</span>
+    </div>
     <table style="width:100%;font-size:0.85em;border-collapse:collapse;">
       <tr>
         <td style="padding:2px 8px;color:#666;">Workers</td>
@@ -14,11 +17,11 @@
       </tr>
       <tr>
         <td style="padding:2px 8px;color:#666;">  └ JobWorker</td>
-        <td style="padding:2px 8px;font-family:monospace;color:#0a0;">2</td>
+        <td style="padding:2px 8px;font-family:monospace;color:#0a0;">2 <span class="activity" id="job-activity" style="color:#28a745;">● active</span></td>
       </tr>
       <tr>
         <td style="padding:2px 8px;color:#666;">  └ CandidateWorker</td>
-        <td style="padding:2px 8px;font-family:monospace;color:#0a0;">2</td>
+        <td style="padding:2px 8px;font-family:monospace;color:#0a0;">2 <span class="activity" id="cand-activity" style="color:#28a745;">● active</span></td>
       </tr>
       <tr></tr>
       <tr>
@@ -52,19 +55,61 @@
   var list = document.getElementById('eventlog-list');
   var reconnectAttempts = 0;
   var maxReconnectAttempts = 30;
+  var lastActivity = Date.now();
+  var activityTimer = null;
+
+  function updateActivityIndicator() {
+    var now = Date.now();
+    var idle = (now - lastActivity) > 5000; // 5s threshold
+    var indicator = document.getElementById('active-indicator');
+    if (idle) {
+      indicator.style.color = '#6c757d';
+      indicator.textContent = '● idle';
+    } else {
+      indicator.style.color = '#28a745';
+      indicator.textContent = '● active';
+    }
+  }
+
+  function markActivity(workerType) {
+    lastActivity = Date.now();
+    var idMap = {
+      'JobWorker': 'job-activity',
+      'CandidateWorker': 'cand-activity'
+    };
+    var id = idMap[workerType] || 'active-indicator';
+    var el = document.getElementById(id);
+    if (el) {
+      el.style.color = '#0a0';
+      el.textContent = '● processing';
+      setTimeout(function() {
+        if (el) {
+          el.style.color = '#28a745';
+          el.textContent = '● active';
+        }
+      }, 1500);
+    }
+    updateActivityIndicator();
+  }
 
   function connect() {
     var ws = new WebSocket('ws://' + window.location.hostname + ':7700/listen/webui_events');
 
-    ws.onopen = function() { console.log('pg_eventserv WebSocket connected'); reconnectAttempts = 0; };
+    ws.onopen = function() { 
+      console.log('pg_eventserv WebSocket connected'); 
+      reconnectAttempts = 0; 
+    };
 
     ws.onmessage = function(event) {
       var data;
       try { data = JSON.parse(event.data); } catch(e) { return; }
 
+      var worker = data.worker || 'Unknown';
+      markActivity(worker.toLowerCase());
+
       var li = document.createElement('li');
       li.className = 'list-item event-item';
-      li.innerHTML = '<span class="worker">' + (data.worker || '') + '</span>' +
+      li.innerHTML = '<span class="worker">' + worker + '</span>' +
                      '<span class="timestamp">' + (data.time || '') + '</span>' +
                      '<span class="type">' + data.type + '</span>' +
                      '<span class="id">' + data.id + '</span>' +
@@ -96,12 +141,14 @@
         document.getElementById('stat-queue').textContent = s.queue_depth;
         document.getElementById('stat-outbox').textContent = s.outbox_pending;
         document.getElementById('stat-processed').textContent = s.processed;
+        updateActivityIndicator();
       })
       .catch(function(e) { console.log('stats fetch error:', e); });
   }
 
   fetchStats();
   setInterval(fetchStats, 2000);
+  setInterval(updateActivityIndicator, 1000);
 })();
 </script>
 {{end}}

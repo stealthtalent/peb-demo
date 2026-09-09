@@ -323,6 +323,32 @@ func (a *App) handleEventLog(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
+// --- Worker pool stats API handler ---
+
+type workerStats struct {
+	QueueDepth    int64 `json:"queue_depth"`
+	Processed     int64 `json:"processed"`
+	OutboxPending int64 `json:"outbox_pending"`
+	Workers       int   `json:"workers"`
+}
+
+func (a *App) handleWorkerStats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	stats := workerStats{Workers: 4}
+
+	row := a.pool.QueryRow(ctx, `SELECT COALESCE(count(*), 0) FROM message_queue WHERE channel = $1 AND available_at <= now()`, "demo-group")
+	_ = row.Scan(&stats.QueueDepth)
+
+	row = a.pool.QueryRow(ctx, `SELECT COALESCE(count(*), 0) FROM processed WHERE consumer_group = $1`, "demo-group")
+	_ = row.Scan(&stats.Processed)
+
+	row = a.pool.QueryRow(ctx, `SELECT COALESCE(count(*) - COALESCE((SELECT last_seq FROM dispatcher_cursor), 0), 0) FROM outbox`)
+	_ = row.Scan(&stats.OutboxPending)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
 // --- Routes ---
 
 func (a *App) routes() http.Handler {
@@ -339,6 +365,9 @@ func (a *App) routes() http.Handler {
 
 	// Event log API (for initial load or polling fallback)
 	mux.Handle("/api/eventlog", http.HandlerFunc(a.handleEventLog))
+
+	// Worker pool stats API (for live monitoring)
+	mux.Handle("/api/worker-stats", http.HandlerFunc(a.handleWorkerStats))
 
 	return mux
 }

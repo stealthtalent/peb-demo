@@ -4,6 +4,29 @@
   <p style="font-size:0.85em;color:#888;margin-bottom:1rem;">
     Live via WebSocket + pg_eventserv (channel: webui_events)
   </p>
+
+  <div class="worker-stats" style="margin-bottom:1rem;padding:0.75rem;background:#f8f8f8;border-radius:6px;border:1px solid #e0e0e0;">
+    <div style="font-size:0.8em;color:#888;font-weight:600;margin-bottom:0.5rem;">Worker Pool Status</div>
+    <table style="width:100%;font-size:0.85em;border-collapse:collapse;">
+      <tr>
+        <td style="padding:2px 8px;color:#666;">Workers</td>
+        <td style="padding:2px 8px;font-family:monospace;" id="stat-workers">4</td>
+      </tr>
+      <tr>
+        <td style="padding:2px 8px;color:#666;">Queue Depth</td>
+        <td style="padding:2px 8px;font-family:monospace;" id="stat-queue">0</td>
+      </tr>
+      <tr>
+        <td style="padding:2px 8px;color:#666;">Outbox Pending</td>
+        <td style="padding:2px 8px;font-family:monospace;" id="stat-outbox">0</td>
+      </tr>
+      <tr>
+        <td style="padding:2px 8px;color:#666;">Processed</td>
+        <td style="padding:2px 8px;font-family:monospace;" id="stat-processed">0</td>
+      </tr>
+    </table>
+  </div>
+
   <ul id="eventlog-list" class="list event-log">
     {{range .}}
     <li class="list-item event-item">
@@ -24,10 +47,7 @@
   function connect() {
     var ws = new WebSocket('ws://' + window.location.hostname + ':7700/listen/webui_events');
 
-    ws.onopen = function() {
-      console.log('pg_eventserv WebSocket connected');
-      reconnectAttempts = 0;
-    };
+    ws.onopen = function() { console.log('pg_eventserv WebSocket connected'); reconnectAttempts = 0; };
 
     ws.onmessage = function(event) {
       var data;
@@ -56,6 +76,22 @@
   }
 
   connect();
+
+  // Poll worker stats every 2 seconds via HTMX-style fetch
+  function fetchStats() {
+    fetch('/api/worker-stats')
+      .then(function(r) { return r.json(); })
+      .then(function(s) {
+        document.getElementById('stat-workers').textContent = s.workers;
+        document.getElementById('stat-queue').textContent = s.queue_depth;
+        document.getElementById('stat-outbox').textContent = s.outbox_pending;
+        document.getElementById('stat-processed').textContent = s.processed;
+      })
+      .catch(function(e) { console.log('stats fetch error:', e); });
+  }
+
+  fetchStats();
+  setInterval(fetchStats, 2000);
 })();
 </script>
 {{end}}

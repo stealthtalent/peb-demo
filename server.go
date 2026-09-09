@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	eventbus "github.com/stealthtalent/postgres-event-bus/api"
 	"github.com/stealthtalent/peb-demo/src/eventlog"
@@ -132,52 +131,29 @@ func NewApp(ctx context.Context, dsn string) (*App, error) {
 		}
 	}()
 
-	// Start the consumer group: group queue -> handler.
-	// The handler appends to the in-memory event log AND fires pg_notify on
-	// the webui channel so pg_eventserv can push to WebSocket clients.
+	// Start the consumer group with TWO concrete Workers, each constrained
+	// to a single event type:
+	// - JobWorker handles "job.created" events
+	// - CandidateWorker handles "candidate.created" events
+	// The base implementation (concurrency, claim, poll, retry, idempotency,
+	// type filtering) lives in RunGroup from the public API. The concrete
+	// per-event effects live only in this client application.
+	jobWorker := NewJobWorker(elog, webuiNotifyChannel)
+	candWorker := NewCandidateWorker(elog, webuiNotifyChannel)
 	go func() {
 		if err := bus.RunGroup(context.Background(), eventbus.GroupOptions{
 			Group:   "demo-group",
-			Workers: 4,
-		}, func(ctx context.Context, tx pgx.Tx, e eventbus.Event) error {
-			var payload map[string]any
-			if len(e.Payload) > 0 {
-				if err := json.Unmarshal(e.Payload, &payload); err != nil {
-					log.Printf("[handler] unmarshal payload for %s: %v", e.ID, err)
-					payload = nil
-				}
-			}
-
-			// Append to the in-memory log (for initial page load / REST API).
-			now := time.Now()
-			entry := eventlog.Entry{
-				ID:      e.ID,
-				Type:    e.Type,
-				Payload: payload,
-			}
-			app.eventLog.Append(entry)
-
-			// Fire pg_notify on the webui channel with the full event JSON so
-			// pg_eventserv can push it to WebSocket clients.
-			wsPayload, _ := json.Marshal(struct {
-				Type    string         `json:"type"`
-				ID      string         `json:"id"`
-				Payload map[string]any `json:"payload"`
-				Time    string         `json:"time"`
-			}{
-				Type:    e.Type,
-				ID:      e.ID,
-				Payload: payload,
-				Time:    now.Format("2006-01-02 15:04:05"),
-			})
-			if _, err := tx.Exec(ctx,
-				`SELECT pg_notify($1, $2)`, webuiNotifyChannel, string(wsPayload)); err != nil {
-				log.Printf("[handler] pg_notify webui: %v", err)
-			}
-
-			return nil
-		}); err != nil {
-			log.Printf("[group worker] exited: %v", err)
+			Workers: 2,
+		}, jobWorker); err != nil {
+			log.Printf("[job worker] exited: %v", err)
+		}
+	}()
+	go func() {
+		if err := bus.RunGroup(context.Background(), eventbus.GroupOptions{
+			Group:   "demo-group",
+			Workers: 2,
+		}, candWorker); err != nil {
+			log.Printf("[candidate worker] exited: %v", err)
 		}
 	}()
 
@@ -334,7 +310,7 @@ type workerStats struct {
 
 func (a *App) handleWorkerStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	stats := workerStats{Workers: 4}
+	stats := workerStats{Workers: 4} // 2 JobWorker + 2 CandidateWorker
 
 	row := a.pool.QueryRow(ctx, `SELECT COALESCE(count(*), 0) FROM message_queue WHERE channel = $1 AND available_at <= now()`, "demo-group")
 	_ = row.Scan(&stats.QueueDepth)

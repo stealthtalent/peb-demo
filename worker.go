@@ -84,7 +84,19 @@ func NewJobWorker(el *eventlog.Log, channel string) *JobWorker {
 
 func (w *JobWorker) EventType() string { return w.eventType }
 
+// jobProcessingDelay simulates processing time so users can watch events
+// flow through the worker in real-time on the demo UI. This is demo-only
+// and not part of the library code.
+const jobProcessingDelay = 200 * time.Millisecond
+
 func (w *JobWorker) Handle(ctx context.Context, tx pgx.Tx, e eventbus.Event) error {
+	// Simulate processing delay for UI visibility (demo only)
+	select {
+	case <-time.After(jobProcessingDelay):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
 	var payload map[string]any
 	if len(e.Payload) > 0 {
 		if err := json.Unmarshal(e.Payload, &payload); err != nil {
@@ -117,7 +129,19 @@ func NewCandidateWorker(el *eventlog.Log, channel string) *CandidateWorker {
 
 func (w *CandidateWorker) EventType() string { return w.eventType }
 
+// candidateProcessingDelay simulates processing time so users can watch events
+// flow through the worker in real-time on the demo UI. This is demo-only
+// and not part of the library code.
+const candidateProcessingDelay = 200 * time.Millisecond
+
 func (w *CandidateWorker) Handle(ctx context.Context, tx pgx.Tx, e eventbus.Event) error {
+	// Simulate processing delay for UI visibility (demo only)
+	select {
+	case <-time.After(candidateProcessingDelay):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
 	var payload map[string]any
 	if len(e.Payload) > 0 {
 		if err := json.Unmarshal(e.Payload, &payload); err != nil {

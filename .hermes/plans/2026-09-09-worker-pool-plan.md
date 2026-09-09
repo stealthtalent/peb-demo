@@ -121,3 +121,5 @@ All steps implemented and verified:
 - `make test`, `make lint`, `go vet ./...` all clean
 - peb-demo server running with Workers: 4
 - End-to-end WebSocket delivery verified: POST /api/jobs → outbox → dispatcher → 4-worker pool → handler → pg_notify('webui_events') → pg_eventserv → WebSocket client receives full event JSON
+- Worker pool monitoring UI added to Event Log tab with /api/worker-stats endpoint (2s polling)
+- Database connections confirmed: 4 LISTEN "demo-group" connections for the 4 worker goroutines

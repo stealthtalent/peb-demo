@@ -14,6 +14,7 @@ import (
 // webuiPayload is the JSON sent to the browser via pg_notify on the webui
 // channel. pg_eventserv forwards this to WebSocket clients.
 type webuiPayload struct {
+	Worker  string         `json:"worker"`
 	Type    string         `json:"type"`
 	ID      string         `json:"id"`
 	Payload map[string]any `json:"payload"`
@@ -23,8 +24,10 @@ type webuiPayload struct {
 // baseWorker provides shared behavior for the concrete JobWorker and
 // CandidateWorker: appending to the in-memory event log and firing
 // pg_notify on the webui channel. Each sub-type constrains itself to
-// a single event type via EventType().
+// a single event type via EventType() and carries a human-readable
+// worker name for UI display.
 type baseWorker struct {
+	name      string
 	eventType string
 	eventLog  *eventlog.Log
 	channel   string
@@ -35,6 +38,7 @@ type baseWorker struct {
 func (b *baseWorker) fireNotify(ctx context.Context, tx pgx.Tx, e eventbus.Event, payload map[string]any) {
 	now := time.Now()
 	wsPayload, _ := json.Marshal(webuiPayload{
+		Worker:  b.name,
 		Type:    e.Type,
 		ID:      e.ID,
 		Payload: payload,
@@ -70,6 +74,7 @@ type JobWorker struct {
 func NewJobWorker(el *eventlog.Log, channel string) *JobWorker {
 	return &JobWorker{
 		baseWorker: baseWorker{
+			name:      "JobWorker",
 			eventType: JobEvent,
 			eventLog:  el,
 			channel:   channel,
@@ -102,6 +107,7 @@ type CandidateWorker struct {
 func NewCandidateWorker(el *eventlog.Log, channel string) *CandidateWorker {
 	return &CandidateWorker{
 		baseWorker: baseWorker{
+			name:      "CandidateWorker",
 			eventType: CandidateEvent,
 			eventLog:  el,
 			channel:   channel,

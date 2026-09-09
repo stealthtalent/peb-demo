@@ -39,13 +39,26 @@
     </table>
   </div>
 
-  <div class="activity-feed-container" style="margin-bottom:1rem;">
-    <div style="font-size:0.8em;color:#888;font-weight:600;margin-bottom:0.5rem;">
-      Worker Activity <span id="activity-status" style="font-size:0.8em;color:#007bff;">(live)</span>
+  <div style="display:flex;gap:1rem;margin-bottom:1rem;">
+
+    <div style="flex:1;">
+      <div style="font-size:0.8em;color:#888;font-weight:600;margin-bottom:0.5rem;">
+        JobWorker Activity <span id="activity-status" style="font-size:0.8em;color:#007bff;">(live)</span>
+      </div>
+      <div id="activity-feed-job" class="activity-feed" style="max-height:300px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:6px;">
+        <div style="padding:0.5rem 0.75rem;font-size:0.8em;color:#aaa;text-align:center;">Waiting for jobs...</div>
+      </div>
     </div>
-    <div id="activity-feed" class="activity-feed" style="max-height:200px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:6px;">
-      <div style="padding:0.5rem 0.75rem;font-size:0.8em;color:#aaa;text-align:center;">Waiting for activity...</div>
+
+    <div style="flex:1;">
+      <div style="font-size:0.8em;color:#888;font-weight:600;margin-bottom:0.5rem;">
+        CandidateWorker Activity <span style="font-size:0.8em;color:#007bff;">(live)</span>
+      </div>
+      <div id="activity-feed-cand" class="activity-feed" style="max-height:300px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:6px;">
+        <div style="padding:0.5rem 0.75rem;font-size:0.8em;color:#aaa;text-align:center;">Waiting for candidates...</div>
+      </div>
     </div>
+
   </div>
 
   <ul id="eventlog-list" class="list event-log">
@@ -81,7 +94,8 @@
   }
 
   function addToActivityFeed(worker, type, eventId, time) {
-    var feed = document.getElementById('activity-feed');
+    var feedId = worker === 'JobWorker' ? 'activity-feed-job' : worker === 'CandidateWorker' ? 'activity-feed-cand' : 'activity-feed-job';
+    var feed = document.getElementById(feedId);
     var placeholder = feed.querySelector('div[style*="text-align:center"]');
     if (placeholder) feed.innerHTML = '';
 

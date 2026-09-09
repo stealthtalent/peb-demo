@@ -110,10 +110,14 @@ No new broker primitives. No ordering guarantees (SPEC §5 is DROPPED). No per-k
 ## Files Touched
 
 - `postgres-event-bus/internal/eventbus/bus.go` — GroupOptions+Workers, RunGroup pool loop
-- `postgres-event-bus/integration/bus_test.go` — test for concurrent RunGroup workers
-- `postgres-event-bus/CLAUDE.md` — decision note
-- `postgres-event-bus/SPEC.md` — §3 update
-- `peb-demo/server.go` — Workers config
-- `peb-demo/Makefile` — add PGQUEUE_GROUP_WORKERS default
+- `postgres-event-bus/integration/bus_test.go` — TestGroupWorker_WorkerPoolProcessesAllEvents
+- `postgres-event-bus/SPEC.md` — §3, §11, §12 updated
+- `peb-demo/server.go` — Workers: 4 in RunGroup call
 
-Done.
+## Status: COMPLETE
+
+All steps implemented and verified:
+- 16/16 integration tests pass (including new TestGroupWorker_WorkerPoolProcessesAllEvents)
+- `make test`, `make lint`, `go vet ./...` all clean
+- peb-demo server running with Workers: 4
+- End-to-end WebSocket delivery verified: POST /api/jobs → outbox → dispatcher → 4-worker pool → handler → pg_notify('webui_events') → pg_eventserv → WebSocket client receives full event JSON

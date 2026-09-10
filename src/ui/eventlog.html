@@ -165,6 +165,14 @@
       var data;
       try { data = JSON.parse(event.data); } catch(e) { return; }
 
+      // Stats-only notification: update queue depth and processed count live
+      if (data.queue_depth !== undefined && data.worker === undefined) {
+        document.getElementById('stat-queue').textContent = data.queue_depth;
+        document.getElementById('stat-processed').textContent = data.processed;
+        updateActivityIndicator();
+        return;
+      }
+
       var worker = data.worker || 'Unknown';
       markActivity(worker);
       addToActivityFeed(worker, data.type, data.id, data.time || '');

@@ -138,8 +138,8 @@ func NewApp(ctx context.Context, dsn string) (*App, error) {
 	// The base implementation (concurrency, claim, poll, retry, idempotency,
 	// type filtering) lives in RunGroup from the public API. The concrete
 	// per-event effects live only in this client application.
-	jobWorker := NewJobWorker(elog, webuiNotifyChannel)
-	candWorker := NewCandidateWorker(elog, webuiNotifyChannel)
+	jobWorker := NewJobWorker(elog, webuiNotifyChannel, pool)
+	candWorker := NewCandidateWorker(elog, webuiNotifyChannel, pool)
 	go func() {
 		if err := bus.RunGroup(context.Background(), eventbus.GroupOptions{
 			Group:   "demo-group",

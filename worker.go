@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	eventbus "github.com/stealthtalent/postgres-event-bus/api"
 	"github.com/stealthtalent/peb-demo/src/eventlog"
 )
@@ -14,11 +15,13 @@ import (
 // webuiPayload is the JSON sent to the browser via pg_notify on the webui
 // channel. pg_eventserv forwards this to WebSocket clients.
 type webuiPayload struct {
-	Worker  string         `json:"worker"`
-	Type    string         `json:"type"`
-	ID      string         `json:"id"`
-	Payload map[string]any `json:"payload"`
-	Time    string         `json:"time"`
+	Worker     string         `json:"worker"`
+	Type       string         `json:"type"`
+	ID         string         `json:"id"`
+	Payload    map[string]any `json:"payload"`
+	Time       string         `json:"time"`
+	QueueDepth int            `json:"queue_depth"`
+	Processed  int64          `json:"processed"`
 }
 
 // baseWorker provides shared behavior for the concrete JobWorker and
@@ -31,6 +34,7 @@ type baseWorker struct {
 	eventType string
 	eventLog  *eventlog.Log
 	channel   string
+	pool      *pgxpool.Pool
 }
 
 // fireNotify marshals the event to webui JSON and executes pg_notify on
@@ -47,6 +51,33 @@ func (b *baseWorker) fireNotify(ctx context.Context, tx pgx.Tx, e eventbus.Event
 	if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, b.channel, string(wsPayload)); err != nil {
 		log.Printf("[worker] pg_notify webui: %v", err)
 	}
+}
+
+// fireStatsNotify sends a stats-only notification on the webui channel after
+// the worker's transaction has committed. This is demo-only and lets the UI
+// update queue depth and processed counts in real-time via WebSocket instead
+// of polling.
+func (b *baseWorker) fireStatsNotify(ctx context.Context, pool *pgxpool.Pool) {
+	var queueDepth, processed int64
+	row := pool.QueryRow(ctx, `SELECT COALESCE(count(*), 0) FROM message_queue WHERE channel = $1 AND available_at <= now()`, "demo-group")
+	_ = row.Scan(&queueDepth)
+	row = pool.QueryRow(ctx, `SELECT COALESCE(count(*), 0) FROM processed WHERE consumer_group = $1`, "demo-group")
+	_ = row.Scan(&processed)
+
+	statsPayload, _ := json.Marshal(webuiStatsPayload{
+		QueueDepth: int(queueDepth),
+		Processed:  processed,
+	})
+	if _, err := pool.Exec(ctx, `SELECT pg_notify($1, $2)`, b.channel, string(statsPayload)); err != nil {
+		log.Printf("[worker] pg_notify stats: %v", err)
+	}
+}
+
+// webuiStatsPayload is a lightweight notification that carries only stats,
+// no event data. The browser updates queue depth / processed count in real-time.
+type webuiStatsPayload struct {
+	QueueDepth int   `json:"queue_depth"`
+	Processed  int64 `json:"processed"`
 }
 
 // logEvent appends the event to the in-memory log (for REST API / initial load).
@@ -71,13 +102,14 @@ type JobWorker struct {
 }
 
 // NewJobWorker creates a Worker that handles job.created events.
-func NewJobWorker(el *eventlog.Log, channel string) *JobWorker {
+func NewJobWorker(el *eventlog.Log, channel string, pool *pgxpool.Pool) *JobWorker {
 	return &JobWorker{
 		baseWorker: baseWorker{
 			name:      "JobWorker",
 			eventType: JobEvent,
 			eventLog:  el,
 			channel:   channel,
+			pool:      pool,
 		},
 	}
 }
@@ -106,6 +138,13 @@ func (w *JobWorker) Handle(ctx context.Context, tx pgx.Tx, e eventbus.Event) err
 	}
 	w.logEvent(e, payload)
 	w.fireNotify(ctx, tx, e, payload)
+	// Fire stats notification shortly after the transaction commits.
+	// RunAtomic commits after Handle returns, so we use a short goroutine
+	// that waits 50ms for the commit to land before querying.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		w.fireStatsNotify(context.Background(), w.pool)
+	}()
 	return nil
 }
 
@@ -116,13 +155,14 @@ type CandidateWorker struct {
 }
 
 // NewCandidateWorker creates a Worker that handles candidate.created events.
-func NewCandidateWorker(el *eventlog.Log, channel string) *CandidateWorker {
+func NewCandidateWorker(el *eventlog.Log, channel string, pool *pgxpool.Pool) *CandidateWorker {
 	return &CandidateWorker{
 		baseWorker: baseWorker{
 			name:      "CandidateWorker",
 			eventType: CandidateEvent,
 			eventLog:  el,
 			channel:   channel,
+			pool:      pool,
 		},
 	}
 }
@@ -151,5 +191,10 @@ func (w *CandidateWorker) Handle(ctx context.Context, tx pgx.Tx, e eventbus.Even
 	}
 	w.logEvent(e, payload)
 	w.fireNotify(ctx, tx, e, payload)
+	// Fire stats notification shortly after the transaction commits.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		w.fireStatsNotify(context.Background(), w.pool)
+	}()
 	return nil
 }
